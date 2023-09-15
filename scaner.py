@@ -28,9 +28,8 @@ HOTKEYS:
 'n' -   go to the next directory if -s
 
 EXAMPLES:
-python {sys.argv[0]} -t 'https://base[0-9]{chr(0x7b)}0,3{chr(0x7d)}.(com,org,net)' -l 44
-python {sys.argv[0]} -t 'https://[a-z]ou?ube[0-9]{chr(0x7b)}0,3{chr(0x7d)}.com' -l 44
-python {sys.argv[0]} -t 'https://anywebsite.com/$' -d https://github.com/trickest/wordlists/raw/main/technologies/bagisto-all-levels.txt 
+python {sys.argv[0]} -t https://anywebsite.com -d https://github.com/trickest/wordlists/raw/main/technologies/bagisto-all-levels.txt
+python {sys.argv[0]} -t https://anywebsite.com
 """
 if os.name=='nt':
 	sep='\\'
