@@ -15,9 +15,11 @@ import re
 from collections import Counter
 import sys
 import glob
+from urllib.parse import urlparse
+
 DEBUGFLAG=False
 HELP_MSG=f"""
-USAGE python {sys.argv[0]} -t <URL> -d <PATH_OR_LINK_TO_DICTIONARY>
+USAGE python {sys.argv[0]} <URL> -d <PATH_OR_LINK_TO_DICTIONARY>
 
 -d You can add list of dictionaries separated by comma 				
 -s you can scan directories on a website
@@ -28,8 +30,9 @@ HOTKEYS:
 'n' -   go to the next directory if -s
 
 EXAMPLES:
-python {sys.argv[0]} -t https://anywebsite.com -d https://github.com/trickest/wordlists/raw/main/technologies/bagisto-all-levels.txt
-python {sys.argv[0]} -t https://anywebsite.com
+python {sys.argv[0]} https://www.yourwebsite.com -s -r
+python {sys.argv[0]} https://www.yourwebsite.com -N 403,424,505 --not "any string shouldn't be in titles"
+python {sys.argv[0]} https://anywebsite.com -d https://github.com/trickest/wordlists/raw/main/technologies/bagisto-all-levels.txt 
 """
 if os.name=='nt':
 	sep='\\'
@@ -44,7 +47,7 @@ def clr():
 
 def get_arguments():
     parser=argparse.ArgumentParser(HELP_MSG)
-    parser.add_argument('-t', required=True, default=None,dest='http_template',help='<URLTEMPLATE>')
+    parser.add_argument('http_template')
     parser.add_argument('-l', required=False, default=None,dest='http_length',help='<MAXURLLENGTH>')
     parser.add_argument('-a', required=False, default=None,dest='useragent',help='<USERAGENT>')
     parser.add_argument('-d', required=False, default=None,dest='dictionary',help='Dictionary(PATH|URL)')
@@ -66,11 +69,11 @@ def get_arguments():
     parser.add_argument('--not', required=False, default=None,dest='notintitle',help='Show URLS if not substring in title.')
     parser.add_argument('-u', required=False, default=None,dest='basicauth',help='Basic authorization user:password.')
     parser.add_argument('-E', required=False, default=None,dest='certpath',help='Path to certificate.')
+    parser.add_argument('-e', required=False, default=None,dest='excludestr',help='Exclude path from search.')
 
 
     options = parser.parse_args()
-    if not options.http_template:
-        parser.error("[-] Please specify an URL TEMPLATE, use --help for more info")
+
     return options
 
 def myprint(*msg, **kwargs):
@@ -86,7 +89,7 @@ def myinput(*msg, **kwargs):
 def find(s, ch):
     return [i for i, ltr in enumerate(s) if ltr == ch]
 
-def superProc(options,queue,number,totalNumber,dirlist,lock):
+def superProc(options,queue,number,totalNumber,dirlist,globaldirlist,notexistingdirlist,lock):
 	HEADERS= {'User-Agent':'Mozilla/5.0 (X11; U; Linux i686) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/73.0.3683.140 Safari/537.36'}
 	PROXIES={}
 	reqparam={'headers':HEADERS}
@@ -140,6 +143,49 @@ def superProc(options,queue,number,totalNumber,dirlist,lock):
 					precentage=number.value/(totalNumber.value/100)
 				if options.delay:
 					time.sleep(int(options.delay)/1000)
+
+				path=urlparse(link).path
+				website=urlparse(link).scheme+'://'+urlparse(link).netloc
+				if '//' in path:
+					path=re.sub('\/+','/',path)
+				while os.path.dirname(path)!='/':
+					path=os.path.dirname(path)
+					if not path.endswith('/'):
+					
+						mypath=path+'/'
+					else:
+						mypath=path
+					reqparam['url']=website+path
+					if mypath in globaldirlist or mypath in notexistingdirlist or mypath=='//':
+						continue
+					else:
+						res=requests.get(**reqparam)
+						# print(globaldirlist)
+						if res.status_code==200 or res.status_code==301:
+								if mypath not in globaldirlist:
+									globaldirlist.append(mypath)
+								else:
+									continue
+
+								if not "Index of" in res.text:
+									print(f"+++++DIRECTORY {reqparam['url']}")
+								else:
+									print(f"+++++OPEN DIRECTORY {reqparam['url']}")
+								for fl in ['index.html','index.php','default.aspx']:
+									try:
+										fl=website+mypath+fl
+										reqparam['url']=fl
+										res=requests.get(**reqparam)
+										if res.status_code==200:
+											code2=res.status_code
+											length2=len(res.text)
+											print(f"Default file {fl} exists (CODE={code2}|LEN={length2})")											
+									except ConnectionError:
+										pass									
+						else:
+							notexistingdirlist.append(mypath)
+
+
 				reqparam['url']=link
 				res=requests.get(**reqparam)
 				code=res.status_code
@@ -198,6 +244,7 @@ def superProc(options,queue,number,totalNumber,dirlist,lock):
 					if contenttType=='text/html' and options.recurs:
 						# Scan dirs should be here
 						listdirs=dirScan(link,reqparam)
+
 						myprint('listdir ',listdirs)
 						for dirr in listdirs:
 							myprint(dirr)
@@ -220,10 +267,13 @@ def superProc(options,queue,number,totalNumber,dirlist,lock):
 						websiteurl=re.sub(r'^(\w{3,5}:\/\/(?:[\w\d\._-]+)+)\/.+',r'\1',link)
 						myprint(f"{websiteurl=}")
 						for dirr in listdirs:
+							if dirr in globaldirlist or dirr in notexistingdirlist:
+								continue
 							url=websiteurl+dirr
 							myprint(f"{url=}")
 							res=requests.get(url,headers=HEADERS)
 							if 200<=res.status_code<400:
+								globaldirlist.append(dirr)
 								print(f'+++++DIRECTORY {url}')
 								if "Index of" in res.text:
 									print(f"{url} is opendirectory")
@@ -332,7 +382,7 @@ def scanDirs(websiteurl,HEADERS):
 		for file in ["robots.txt","sitemap.xml"]:
 			try:
 				res=requests.get('https://'+websiteurl+file,headers=HEADERS)
-				results=re.findall(r"(?:\s|^)(\/.+\/)(?:\s*|$)",res.text)
+				results=re.findall(r"(?:\s|^)(\/[^\.]+\/)(?:\s*|$)",res.text)
 				myprint(results)
 				for dir in results:
 					myprint(dir)
@@ -346,7 +396,25 @@ def scanDirs(websiteurl,HEADERS):
 	except:
 		print('no results')
 		return dirlist
-	
+
+def myput(queue,options,url):
+	if options.excludestr:
+		excludestr=options.excludestr
+		if '*' in excludestr:
+			beg,endstr=excludestr.split('*')
+			if url.startswith(beg) and url.endswith(endstr):
+				return
+			else:
+				queue.put(url)
+				return
+		else:
+			if not url.startswith(excludestr):
+				queue.put(url)
+				return
+			else:
+				return		
+	else:
+		queue.put(url)	
 
 def main(dirCounter):
 	global DEBUGFLAG
@@ -365,11 +433,15 @@ def main(dirCounter):
 	numbcomb=1 #number of possible urls 
 	wordCounter=0
 	wordProduct=None
+
+
 	options=get_arguments()
 	extvars=list()
 	manager=Manager()
 	number=manager.Value('i',0)	
 	dirlist=manager.list()
+	globaldirlist=manager.list()
+	notexistingdirlist=manager.list()
 	totalnumber=manager.Value('i',0)	
 	lock=manager.Lock()
 	if options.extvar:
@@ -377,13 +449,16 @@ def main(dirCounter):
 
 	if options.procnum:
 		PROC_NUM=int(options.procnum)
-	http_template=options.http_template
+	if options.http_template:
+		http_template=options.http_template
+	
+
 	websiteurl=options.http_template
 	procs=[]
 	dt=datetime.now()
 	print(dt.strftime('START_TIME: %a %b %d %H:%M:%S %Y'))
 	for num in range(0,PROC_NUM):
-		prc=Process(target=superProc,args=(options,queue,number,totalnumber,dirlist,lock,))
+		prc=Process(target=superProc,args=(options,queue,number,totalnumber,dirlist,globaldirlist,notexistingdirlist,lock,))
 		prc.start()
 		procs.append(prc)	
 	if not options.http_length:
@@ -448,12 +523,16 @@ def main(dirCounter):
 			if "/" in dirlist:
 				dirlist.remove('/')
 			dirlist.insert(0,'/')
-			print("dirlist ",dirlist)
+			myprint("dirlist ",dirlist)
 		# with lock:
 			for dirr in dirlist:
+				if dirr in globaldirlist or dirr in notexistingdirlist:
+					continue
 				url=websiteurl+dirr
+
 				res=requests.get(url,headers=HEADERS)
 				if 200<=res.status_code<400:
+					globaldirlist.append(dirr)
 					print(f'+++++DIRECTORY {url}')
 					if "Index of" in res.text:
 						print(f"{url} is opendirectory")
@@ -471,9 +550,10 @@ def main(dirCounter):
 							pass
 
 				else:
+					notexistingdirlist.append(dirr)
 					dirlist.remove(dirr)
 		# with lock:
-			print(dirlist)
+			myprint(dirlist)
 
 		if options.recurs:
 			print("recurs")
@@ -494,11 +574,11 @@ def main(dirCounter):
 							prevdir=curidx
 					url=websiteurl+dirlist[dirIndex]+words
 					if extvars:
-						queue.put(url)
+						myput(queue,options,url)
 						for ext in extvars:
-							queue.put(url+ext)
+							myput(queue,options,url+ext)
 					else:
-						queue.put(url)					
+						myput(queue,options,url)					
 				dirCounter.value+=1
 			for _ in range(PROC_NUM):
 				queue.put('TERMINATE')
@@ -522,11 +602,11 @@ def main(dirCounter):
 				prevdir=curidx
 		url=websiteurl+dirlist[dirIndex]+words
 		if extvars:
-			queue.put(url)
+			myput(queue,options,url)
 			for ext in extvars:
-				queue.put(url+ext)
+				myput(queue,options,url+ext)
 		else:
-			queue.put(url)
+			myput(queue,options,url)
 
 	for _ in range(PROC_NUM):
 		queue.put('TERMINATE')
