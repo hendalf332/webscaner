@@ -17,6 +17,59 @@ import sys
 import glob
 from urllib.parse import urlparse
 
+
+def downloadFile(url:str,dnldfile:str):
+    with open(dnldfile, 'wb') as handle:
+        response = requests.get(url, stream=True)
+        hdrs=response.headers
+        print(f"Content-Type {hdrs['Content-Type']}")
+        if not response.ok:
+            print("ok")
+        for block in response.iter_content(1024):
+         if not block:
+             break
+         handle.write(block)
+
+
+def count_lines(file_path, chunk_size=8192):
+    line_count = 0
+    with open(file_path, 'r', encoding='utf-8') as file:
+        while True:
+            chunk = file.read(chunk_size)
+            if not chunk:
+                break
+            line_count += Counter(chunk)['\n']
+    return line_count
+
+def word_generator(filenamelist):
+    word = '' 
+    for filename in filenamelist:
+        if filename.startswith('http://') or filename.startswith('https://'):
+            path=urlparse(filename).path
+            filename=os.path.basename(path)
+
+        try:
+            with open(filename, 'r') as file:
+                while True:
+                    char = file.read(1) 
+
+                    if not char:
+                       
+                        if word:
+                            yield word
+                        break
+
+                    if char not in ('\r', '\n'):
+                        word += char 
+                    else:
+                        if word:
+                            yield word 
+                            word = '' 
+        except FileNotFoundError:
+            print(f"The file '{filename}' was not found.")
+
+
+
 DEBUGFLAG=False
 HELP_MSG=f"""
 USAGE python {sys.argv[0]} <URL> -d <PATH_OR_LINK_TO_DICTIONARY>
@@ -54,6 +107,7 @@ def get_arguments():
     parser.add_argument('-H', required=False, default=None,dest='header_string',help='Add a custom header to the HTTP request.')
     parser.add_argument('-loc', action="store_true",dest='location',help='Print "Location" header when found')
     parser.add_argument('-N', required=False, default=None,dest='nf_code',help='Ignore responses with this HTTP code.')
+    parser.add_argument('-S', required=False, default=None,dest='st_code',help='Print only with this HTTP code.')
     parser.add_argument('-o', required=False, default=None,dest='output_file',help='Save output to disk')
     parser.add_argument('-p', required=False, default=None,dest='proxyaddr_port',help='Use this proxy. (Default port is 1080)')
     parser.add_argument('-P', required=False, default=None,dest='proxy_data',help='Proxy Authentication <username:password>.')
@@ -84,7 +138,8 @@ def myprint(*msg, **kwargs):
 def myinput(*msg, **kwargs):
 	global DEBUGFLAG
 	if DEBUGFLAG:
-		input(*msg, **kwargs)
+		pass
+		# input(*msg, **kwargs)
 
 def find(s, ch):
     return [i for i, ltr in enumerate(s) if ltr == ch]
@@ -96,6 +151,7 @@ def superProc(options,queue,number,totalNumber,dirlist,globaldirlist,notexisting
 	user=password=None
 	myprint("superproc started")
 	nf_codes=[]
+	st_codes=[]
 	mimetypes.add_type('text/html','.php',strict=True)
 	mimetypes.add_type('text/html','.aspx',strict=True)
 	mimetypes.add_type('text/plain','.ini',strict=True)
@@ -126,6 +182,9 @@ def superProc(options,queue,number,totalNumber,dirlist,globaldirlist,notexisting
 	if options.nf_code:
 		nf_codes=list(map(int,options.nf_code.split(',')))
 		myprint(nf_codes)
+	if options.st_code:
+		st_codes=list(map(int,options.st_code.split(',')))
+		myprint(st_codes)
 
 	while True:
 
@@ -139,8 +198,8 @@ def superProc(options,queue,number,totalNumber,dirlist,globaldirlist,notexisting
 				return
 			precentage=0
 			try:
-				if totalNumber.value>0:
-					precentage=number.value/(totalNumber.value/100)
+				# if totalNumber.value>0:
+				# 	precentage=number.value/(totalNumber.value/100)
 				if options.delay:
 					time.sleep(int(options.delay)/1000)
 
@@ -180,7 +239,7 @@ def superProc(options,queue,number,totalNumber,dirlist,globaldirlist,notexisting
 											code2=res.status_code
 											length2=len(res.text)
 											print(f"Default file {fl} exists (CODE={code2}|LEN={length2})")											
-									except ConnectionError:
+									except Exception as ex:
 										pass									
 						else:
 							notexistingdirlist.append(mypath)
@@ -205,11 +264,11 @@ def superProc(options,queue,number,totalNumber,dirlist,globaldirlist,notexisting
 							if rs.status_code not in nf_codes:
 								if rs.status_code in [403,200,301]:
 									if mimtype[0]==contenttType:
-										print(f"+{link+ext} ((CODE={rs.status_code}|LEN={len(rs.text)}))\n{number.value} Links %{precentage}")
+										print(f"+{link+ext} ((CODE={rs.status_code}|LEN={len(rs.text)}))")#\n{number.value} Links %{precentage}")
 									else:
-										print(f"-{link+ext} ((CODE={rs.status_code}|LEN={len(rs.text)}))\n{number.value} Links %{precentage}")
+										print(f"-{link+ext} ((CODE={rs.status_code}|LEN={len(rs.text)}))")#\n{number.value} Links %{precentage}")
 								else:
-									print(f"-{link+ext} ((CODE={rs.status_code}|LEN={len(rs.text)}))\n{number.value} Links %{precentage}")
+									print(f"-{link+ext} ((CODE={rs.status_code}|LEN={len(rs.text)}))")#\n{number.value} Links %{precentage}")
 								if options.output_file:
 									with open(options.output_file,'a',encoding='utf-8') as fl:
 										fl.write(f"+{link+ext} ((CODE={rs.status_code}|LEN={len(rs.text)}))\n")
@@ -231,10 +290,17 @@ def superProc(options,queue,number,totalNumber,dirlist,globaldirlist,notexisting
 						title=re.sub('\s+',' ',title)
 						if res1:
 							if (not options.NOT_FOUND and code!=404) or (options.NOT_FOUND and code==404) :
-								print(f"{link=} Title:{res1[1]}")
-								if options.output_file:
-									with open(options.output_file,'a',encoding='utf-8') as fl:
-										fl.writelines(f"{link=} Title:{res1[1]}\n")
+								if st_codes:
+									if code in st_codes:
+										print(f"{link=} Title:{res1[1]}")
+										if options.output_file:
+											with open(options.output_file,'a',encoding='utf-8') as fl:
+												fl.writelines(f"{link=} Title:{res1[1]}\n")
+								else:
+									print(f"{link=} Title:{res1[1]}")
+									if options.output_file:
+										with open(options.output_file,'a',encoding='utf-8') as fl:
+											fl.writelines(f"{link=} Title:{res1[1]}\n")
 
 
 
@@ -297,7 +363,7 @@ def superProc(options,queue,number,totalNumber,dirlist,globaldirlist,notexisting
 							# print(dirlist)
 
 					if mimtype[0]==contenttType or re.search(r"\/\.\w+$",link) and 200<=code<400:
-						linkres=f"+{link} (CODE={code}|LEN={length})\n {number.value} %{precentage}"
+						linkres=f"+{link} (CODE={code}|LEN={length})"#\n {number.value} %{precentage}"
 					else:
 						linkres=f"-{link} (CODE={code}|LEN={length}|Type={contenttType}) {mimtype}"
 				else:
@@ -311,28 +377,51 @@ def superProc(options,queue,number,totalNumber,dirlist,globaldirlist,notexisting
 
 				if nf_codes:
 					if code not in nf_codes and length>0:
-						print(linkres)
-						if options.output_file:
-							with open(options.output_file,'a',encoding='utf-8') as fl:
-								fl.writelines(linkres+"\n")
+						if st_codes:
+							if code in st_codes:
+								print(linkres)
+								if options.output_file:
+									with open(options.output_file,'a',encoding='utf-8') as fl:
+										fl.writelines(linkres+"\n")							
+						else:
+							print(linkres)
+							if options.output_file:
+								with open(options.output_file,'a',encoding='utf-8') as fl:
+									fl.writelines(linkres+"\n")
 				else:
 					if code!=404 and length>0:
-						print(linkres)
-						if options.output_file:
-							with open(options.output_file,'a',encoding='utf-8') as fl:
-								fl.writelines(linkres+"\n")					
+						if st_codes:
+							if code in st_codes:
+								print(linkres)
+								if options.output_file:
+									with open(options.output_file,'a',encoding='utf-8') as fl:
+										fl.writelines(linkres+"\n")								
+						else:
+							print(linkres)
+							if options.output_file:
+								with open(options.output_file,'a',encoding='utf-8') as fl:
+									fl.writelines(linkres+"\n")					
 
 
 			except ConnectionError:
 				if options.NOT_FOUND_PAGES:
 					print(f"NOT_FOUND_PAGE: {link}")
 				myprint("[-]Connection problems")
+			except BrokenPipeError:
+				print("BrokenPipeError")
+				return
+			except:
+				pass
 			finally:
 				precentage=0
-				if totalNumber.value>0:
-					precentage=number.value/(totalNumber.value/100)
-				print(f"\rPROGRESS: {number.value} or {totalNumber.value} %{precentage:00.2f}",end='\r')
-				number.value+=1
+				try:
+					if totalNumber.value>0:
+						precentage=number.value/(totalNumber.value/100)
+					print(f"\rPROGRESS: {number.value} or {totalNumber.value} %{precentage:00.2f}",end='\r')
+					number.value+=1
+				except Exception as ex:
+					print(ex)
+
 
 def dirScan(link,reqparam):
 	dirlist=list()
@@ -477,26 +566,24 @@ def main(dirCounter):
 		time.sleep(3)
 
 	print(f"WORDLIST_FILES: {dictionaryList} ")
-	for word_dictionary in dictionaryList:
-		if word_dictionary:
-			if re.match(r'^(https?|ftp)',word_dictionary):
-				res=requests.get(word_dictionary,headers=HEADERS)
-				if res.status_code==200:
-					word_list_item=res.text.split('\n')
-				else:
-					print('[-] The dictionary incorrect')	
-					return
 
-			elif os.path.exists(word_dictionary):
-				word_list_item=open(word_dictionary,'r',encoding='utf-8').read().split('\n')	
-			else:
-				word_dictionary=None
-				print('[-] The dictionary incorrect')
-				return
-		word_list.extend(word_list_item)
-	word_list=list(set(word_list))
-	word_list=[re.sub(r"\d+","",el) for el in word_list if len(el.strip())>2 ]
-	totalnumber.value=len(word_list)*(len(extvars)+1)
+	wordcounter=0
+	for dictpath in dictionaryList:
+		if dictpath.startswith('http://') or dictpath.startswith('https://'):
+			path=urlparse(dictpath).path
+			path=os.path.basename(path)
+			if path!='' or path!='/':
+				downloadFile(dictpath,path)
+				dictpath=path
+
+		if os.path.exists(dictpath):
+			wordcounter+=count_lines(dictpath,50_000)
+	word_list=word_generator(dictionaryList)
+	myprint('stucked here')
+	#wordProduct=(word_generator(dictionaryList) for _ in range(0,3))#iter(product(word_generator(dictionaryList),repeat=2))
+
+	totalnumber.value=wordcounter*(len(extvars)+1)
+
 	print(f"GENERATED WORDS: {totalnumber.value}")
 	myinput()
 
@@ -556,9 +643,7 @@ def main(dirCounter):
 			myprint(dirlist)
 
 		if options.recurs:
-			print("recurs")
-			# with lock:
-			totalnumber.value=len(word_list)*len(dirlist)
+			totalnumber.value*=len(dirlist)
 			while dirCounter.value!=len(dirlist):
 				for words in word_list:
 					if len(dirlist)==0:
