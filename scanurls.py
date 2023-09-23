@@ -14,6 +14,7 @@ from datetime import datetime
 import re
 from collections import Counter
 import sys
+
 DEBUGFLAG=False
 HELP_MSG=f"""
 USAGE python {sys.argv[0]} -t <URLTEMPLATE> -l <MAXIMUMLENGTHOFURL> -d <PATH_OR_LINK_TO_DICTIONARY>
@@ -38,6 +39,57 @@ python {sys.argv[0]} -t 'https://base[0-9]{chr(0x7b)}0,3{chr(0x7d)}.(com,org,net
 python {sys.argv[0]} -t 'https://[a-z]ou?ube[0-9]{chr(0x7b)}0,3{chr(0x7d)}.com' -l 44
 python {sys.argv[0]} -t 'https://anywebsite.com/$' -d https://github.com/trickest/wordlists/raw/main/technologies/bagisto-all-levels.txt 
 """
+
+def downloadFile(url:str,dnldfile:str):
+    with open(dnldfile, 'wb') as handle:
+        response = requests.get(url, stream=True)
+        hdrs=response.headers
+        print(f"Content-Type {hdrs['Content-Type']}")
+        if not response.ok:
+            print("ok")
+        for block in response.iter_content(1024):
+         if not block:
+             break
+         handle.write(block)
+
+
+def count_lines(file_path, chunk_size=8192):
+    line_count = 0
+    with open(file_path, 'r', encoding='utf-8') as file:
+        while True:
+            chunk = file.read(chunk_size)
+            if not chunk:
+                break
+            line_count += Counter(chunk)['\n']
+    return line_count
+
+def word_generator(filenamelist):
+    word = '' 
+    for filename in filenamelist:
+        if filename.startswith('http://') or filename.startswith('https://'):
+            path=urlparse(filename).path
+            filename=os.path.basename(path)
+
+        try:
+            with open(filename, 'r') as file:
+                while True:
+                    char = file.read(1) 
+
+                    if not char:
+                       
+                        if word:
+                            yield word
+                        break
+
+                    if char not in ('\r', '\n'):
+                        word += char 
+                    else:
+                        if word:
+                            yield word 
+                            word = '' 
+        except FileNotFoundError:
+            print(f"The file '{filename}' was not found.")
+
 
 template_list=list()
 def clr():
@@ -80,15 +132,51 @@ def get_arguments():
 def myprint(*msg, **kwargs):
 	global DEBUGFLAG
 	if DEBUGFLAG:
+		print("DEBUG:   ",end=" ")
 		print(*msg, **kwargs)
 
 def myinput(*msg, **kwargs):
 	global DEBUGFLAG
 	if DEBUGFLAG:
-		input(*msg, **kwargs)
+		pass
+		#input(*msg, **kwargs)
 
 def find(s, ch):
     return [i for i, ltr in enumerate(s) if ltr == ch]
+
+
+def replacedolar(dictlist,queue,url,extvars=[]):
+	myprint('replacedolar')
+	for item in word_generator(dictlist):
+		# myprint(item)
+		if Counter(url)['$']==1 and extvars:
+			queue.put(url.replace('$',item,1))
+			for ext in extvars:
+				queue.put(url.replace('$',item+ext,1))
+			continue
+		elif Counter(url)['$']==1:
+			queue.put(url.replace('$',item,1))
+			# print(url,1)
+			continue
+		else:
+			newurl=url.replace('$',item,1)
+		if '$' in newurl:
+		    for it in word_generator(dictlist):
+		        if Counter(newurl)['$']==1 and extvars:
+		            for ext in extvars:
+		                queue.put(newurl.replace('$',it+ext,1))
+		            queue.put(newurl.replace('$',it,1))
+					# queue.put(newurl.replace('$',it,1))
+		    newurl=replacedolar(dictlist,queue,newurl,extvars)
+		else:
+		    if Counter(newurl)['$']==1 and extvars:
+		        for ext in extvars:
+		            queue.put(newurl+ext)
+		        queue.put(newurl)
+		    else:
+		        queue.put(newurl)
+		    return newurl
+
 
 def superProc(options,queue,number,totalNumber,dirlist,lock):
 	HEADERS= {'User-Agent':'Mozilla/5.0 (X11; U; Linux i686) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/73.0.3683.140 Safari/537.36'}
@@ -135,13 +223,13 @@ def superProc(options,queue,number,totalNumber,dirlist,lock):
 			title=''
 			link=queue.get()	
 			myprint(link)
+			precentage=1		
 			if link.startswith('TERMINATE'):
 				print('superproc TERMINATED')
 				return
 			try:
-				precentage=0
-				if totalNumber.value>0:
-					precentage=number.value/(totalNumber.value/100)
+				# if totalNumber.value>0:
+				# 	precentage=number.value/(totalNumber.value/100)
 				if options.delay:
 					time.sleep(int(options.delay)/1000)
 				reqparam['url']=link
@@ -166,11 +254,11 @@ def superProc(options,queue,number,totalNumber,dirlist,lock):
 							if rs.status_code not in nf_codes:
 								if rs.status_code in [403,200,301]:
 									if mimtype[0]==contenttType:
-										print(f"+{link+ext} ((CODE={rs.status_code}|LEN={len(rs.text)}))\n{number.value} Links %{precentage}")
+										print(f"+{link+ext} ((CODE={rs.status_code}|LEN={len(rs.text)}))")
 									else:
-										print(f"-{link+ext} ((CODE={rs.status_code}|LEN={len(rs.text)}))\n{number.value} Links %{precentage}")
+										print(f"-{link+ext} ((CODE={rs.status_code}|LEN={len(rs.text)}))")
 								else:
-									print(f"-{link+ext} ((CODE={rs.status_code}|LEN={len(rs.text)}))\n{number.value} Links %{precentage}")
+									print(f"-{link+ext} ((CODE={rs.status_code}|LEN={len(rs.text)}))")
 								if options.output_file:
 									with open(options.output_file,'a',encoding='utf-8') as fl:
 										fl.write(f"+{link+ext} ((CODE={rs.status_code}|LEN={len(rs.text)}))\n")
@@ -237,7 +325,7 @@ def superProc(options,queue,number,totalNumber,dirlist,lock):
 										if res.status_code==200:
 											code2=res.status_code
 											length2=len(res.text)
-											print(f"Default file {fl} exists (CODE2={code2}|LEN2={length2})")											
+											print(f"Default file {fl} exists (CODE2={code2}|LEN2={length2})")
 									except ConnectionError:
 										pass
 							else:
@@ -249,11 +337,11 @@ def superProc(options,queue,number,totalNumber,dirlist,lock):
 							# print(dirlist)
 
 					if mimtype[0]==contenttType or re.search(r"\/\.\w+$",link) or re.search(r'^(\w{3,5}:\/\/(?:[\w\d\._-]+)+)$',link):
-						linkres=f"+{link} (CODE={code}|LEN={length})\n {number.value} %{precentage}"
+						linkres=f"+{link} (CODE={code}|LEN={length})\n"# {number.value} %{precentage}"
 					else:
-						linkres=f"-{link} (CODE={code}|LEN={length}|Type={contenttType}) {mimtype}\n{number.value} Links %{precentage}"
+						linkres=f"-{link} (CODE={code}|LEN={length}|Type={contenttType}) {mimtype}"#\n{number.value} Links %{precentage}"
 				else:
-					linkres=f"-{link} (CODE={code}|LEN={length})\n{number.value} Links %{precentage}"
+					linkres=f"-{link} (CODE={code}|LEN={length})"#\n{number.value} Links %{precentage}"
 				if options.location:
 				 	headers=res.headers
 				 	try:
@@ -279,11 +367,11 @@ def superProc(options,queue,number,totalNumber,dirlist,lock):
 					print(f"NOT_FOUND_PAGE: {link}")
 				myprint("[-]Connection problems")
 			finally:
-				precentage=0
-				if totalNumber.value>0:
-					precentage=number.value/(totalNumber.value/100)
-				print(f"\rPROGRESS: {number.value} of {totalNumber.value if totalNumber.value!=0 else 'Unknown'} %{precentage:00.2f}",end='\r')
-				number.value+=1
+				precentage=1
+				# if totalNumber.value>0:
+				# 	precentage=number.value/(totalNumber.value/100)
+				# print(f"\rPROGRESS: {number.value} of {totalNumber.value if totalNumber.value!=0 else 'Unknown'} %{precentage:00.2f}",end='\r')
+				# y.value+=1
 
 def caluclate_order(mystr):
 	idxres={}
@@ -500,31 +588,24 @@ def main(dirCounter):
 		dictionaryList=options.dictionary.split(',')
 		print(f"WORDLIST_FILES: {dictionaryList} ")
 
-		for word_dictionary in dictionaryList:
-			if word_dictionary:
-				if re.match(r'^(https?|ftp)',word_dictionary):
-					res=requests.get(word_dictionary,headers=HEADERS)
-					if res.status_code==200:
-						word_list_item=res.text.split('\n')
-					else:
-						print('[-] The dictionary incorrect')	
-						return
+		wordcounter=0
+		for dictpath in dictionaryList:
+			if dictpath.startswith('http://') or dictpath.startswith('https://'):
+				path=urlparse(dictpath).path
+				path=os.path.basename(path)
+				if path!='' or path!='/':
+					downloadFile(dictpath,path)
+					dictpath=path
 
-				elif os.path.exists(word_dictionary):
-					word_list_item=open(word_dictionary,'r',encoding='utf-8').read().split('\n')	
-				else:
-					word_dictionary=None
-					print('[-] The dictionary incorrect')
-					return
-			word_list.extend(word_list_item)
-		word_list=list(set(word_list))
-		word_list=[re.sub(r"\d+","",el) for el in word_list if len(el.strip())>2 ]
-		totalnumber.value=len(word_list)
-		wordCounter=Counter(http_template)
-		wordCounter=wordCounter['$']
-		myprint(wordCounter)
-		wordProduct=iter(product(word_list,repeat=wordCounter))
-		myinput()
+			if os.path.exists(dictpath):
+				wordcounter+=count_lines(dictpath,50_000)
+		word_list=word_generator(dictionaryList)
+		totalnumber.value=wordcounter*(len(extvars)+1)
+
+		dolarCounter=Counter(http_template)
+		dolarCounter=dolarCounter['$']
+		myprint(dolarCounter)
+
 
 	if options.scan_dirs:
 
@@ -579,7 +660,8 @@ def main(dirCounter):
 		if options.recurs:
 			print("recurs")
 			# with lock:
-			totalnumber.value=len(word_list)*len(dirlist)
+			# totalnumber.value=len(word_list)*len(dirlist)
+			totalnumber.value*=len(dirlist)
 			while dirCounter.value!=len(dirlist):
 				for words in word_list:
 					if len(dirlist)==0:
@@ -619,7 +701,7 @@ def main(dirCounter):
 				time.sleep(0.005)
 				curidx=dirlist[dirIndex]
 				if prevdir!=curidx:
-					print(f"[!]Current directory {curidx}")
+					print(f"[!]Scan directory {curidx}")
 					prevdir=curidx
 			url=websiteurl+dirlist[dirIndex]+words[0]
 			# print(url)
@@ -638,7 +720,6 @@ def main(dirCounter):
 		print(dt.strftime('END_TIME: %a %b %d %H:%M:%S %Y'))			
 		# input()
 		return
-
 	order=caluclate_order(http_template)
 				
 	myprint(order)
@@ -730,7 +811,8 @@ def main(dirCounter):
 
 
 	# myinput()
-
+	myprint('tut2')
+	totnmbr=1
 	for (http_template,order,wildcharlist) in http_template_list:
 		masks_list=[]
 		supercharlist=[]
@@ -743,11 +825,16 @@ def main(dirCounter):
 					masks_list.append((newmask,cntr['?']))
 		if len(masks_list)==0:
 			masks_list.append((http_template,Counter(http_template)['?']))
-		myprint(masks_list)
 		for wldchr,chrlst in wildcharlist:
 			supercharlist.append(chrlst)
-		myprint("supercharlist ",supercharlist)		
-		
+			totnmbr*=len(chrlst)
+
+		totalnumber.value*=totnmbr
+		myprint(f"{totalnumber.value=}")
+		print(f"{masks_list[-1][-1]}*{len(chrStr)}")		
+		if masks_list[-1][-1]>0:
+			totalnumber.value*=masks_list[-1][-1]*len(chrStr)
+		myprint(f"{totalnumber.value=} 2")
 
 		for mask,length in masks_list:
 			all_combinations=product(chrStr,repeat=length)
@@ -773,22 +860,9 @@ def main(dirCounter):
 								myprint(newresstr)
 								while queue.qsize()>1000000:
 									pass
-								if '$' in newresstr and wordProduct:
-									for words in wordProduct:
-										newresstr2=newresstr
-										for word in words:
-											if extvars:	
-												for ext in extvars:
-													newresstr3=newresstr2.replace('$',word+ext,1)
-													queue.put(newresstr3)
-												newresstr2=newresstr2.replace('$',word,1)
-												queue.put(newresstr2)
-											else:									
-												newresstr2=newresstr2.replace('$',word,1)
-												newresstr2=re.sub(r"\\(\?|\$|\*|\!)",r'\1',newresstr2)
-												queue.put(newresstr2)
+								if '$' in newresstr:
+									replacedolar(dictionaryList,queue,newresstr,extvars)
 								else:
-									newresstr=re.sub(r"\\(\?|\$|\*|\!)",r'\1',newresstr)
 									queue.put(newresstr)
 								break
 						newresstr=resstr
@@ -799,25 +873,9 @@ def main(dirCounter):
 						all_http_results.append(resstr)
 						while queue.qsize()>1000000:
 							pass
-
-						if '$' in resstr and wordProduct:
-							for words in wordProduct:
-								newresstr=resstr
-								for word in words:		
-									if extvars:
-										for ext in extvars:
-											newresstr2=newresstr.replace('$',word+ext,1)
-											queue.put(newresstr2)
-
-										newresstr=newresstr.replace('$',word,1)
-										# queue.put(newresstr)
-
-									else:								
-										newresstr=newresstr.replace('$',word,1)
-								newresstr=re.sub(r"\\(\?|\$|\*|\!)",r'\1',newresstr)
-								queue.put(newresstr)
+						if '$' in resstr:
+							replacedolar(dictionaryList,queue,resstr,extvars)
 						else:
-							resstr=re.sub(r"\\(\?|\$|\*|\!)",r'\1',resstr)
 							queue.put(resstr)
 
 	for _ in range(PROC_NUM):
