@@ -17,6 +17,7 @@ import sys
 import glob
 from urllib.parse import urlparse
 
+DEBUGFLAG=False
 
 def downloadFile(url:str,dnldfile:str):
     with open(dnldfile, 'wb') as handle:
@@ -70,7 +71,6 @@ def word_generator(filenamelist):
 
 
 
-DEBUGFLAG=False
 HELP_MSG=f"""
 USAGE python {sys.argv[0]} <URL> -d <PATH_OR_LINK_TO_DICTIONARY>
 
@@ -144,7 +144,24 @@ def myinput(*msg, **kwargs):
 def find(s, ch):
     return [i for i, ltr in enumerate(s) if ltr == ch]
 
-def superProc(options,queue,number,totalNumber,dirlist,globaldirlist,notexistingdirlist,lock):
+def gen_words(dictionaryList):
+	wordcounter=0
+	for dictpath in dictionaryList:
+		if dictpath.startswith('http://') or dictpath.startswith('https://'):
+			path=urlparse(dictpath).path
+			path=os.path.basename(path)
+			if path!='' or path!='/':
+				downloadFile(dictpath,path)
+				dictpath=path
+
+		if os.path.exists(dictpath):
+			wordcounter+=count_lines(dictpath,50_000)
+		myprint(f"{dictpath} {wordcounter}")
+	word_list=word_generator(dictionaryList)
+	return wordcounter,word_list
+
+
+def superProc(options,queue,number,totalNumber,dirlist,globaldirlist,notexistingdirlist,superlist,lock):
 	HEADERS= {'User-Agent':'Mozilla/5.0 (X11; U; Linux i686) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/73.0.3683.140 Safari/537.36'}
 	PROXIES={}
 	reqparam={'headers':HEADERS}
@@ -198,212 +215,214 @@ def superProc(options,queue,number,totalNumber,dirlist,globaldirlist,notexisting
 				return
 			precentage=0
 			try:
-				# if totalNumber.value>0:
-				# 	precentage=number.value/(totalNumber.value/100)
-				if options.delay:
-					time.sleep(int(options.delay)/1000)
+				if not link in superlist: 
+					superlist.append(link)
+					if options.delay:
+						time.sleep(int(options.delay)/1000)
 
-				path=urlparse(link).path
-				website=urlparse(link).scheme+'://'+urlparse(link).netloc
-				if '//' in path:
-					path=re.sub('\/+','/',path)
-				while os.path.dirname(path)!='/':
-					path=os.path.dirname(path)
-					if not path.endswith('/'):
-					
-						mypath=path+'/'
-					else:
-						mypath=path
-					reqparam['url']=website+path
-					if mypath in globaldirlist or mypath in notexistingdirlist or mypath=='//':
-						continue
-					else:
-						res=requests.get(**reqparam)
-						# print(globaldirlist)
-						if res.status_code==200 or res.status_code==301:
-								if mypath not in globaldirlist:
-									globaldirlist.append(mypath)
-								else:
-									continue
-
-								if not "Index of" in res.text:
-									print(f"+++++DIRECTORY {reqparam['url']}")
-								else:
-									print(f"+++++OPEN DIRECTORY {reqparam['url']}")
-								for fl in ['index.html','index.php','default.aspx']:
-									try:
-										fl=website+mypath+fl
-										reqparam['url']=fl
-										res=requests.get(**reqparam)
-										if res.status_code==200:
-											code2=res.status_code
-											length2=len(res.text)
-											print(f"Default file {fl} exists (CODE={code2}|LEN={length2})")											
-									except Exception as ex:
-										pass									
+					path=urlparse(link).path
+					website=urlparse(link).scheme+'://'+urlparse(link).netloc
+					if '//' in path:
+						path=re.sub('\/+','/',path)
+					while os.path.dirname(path)!='/':
+						path=os.path.dirname(path)
+						if not path.endswith('/'):
+						
+							mypath=path+'/'
 						else:
-							notexistingdirlist.append(mypath)
+							mypath=path
+						reqparam['url']=website+path
+						if mypath in globaldirlist or mypath in notexistingdirlist or mypath=='//':
+							continue
+						else:
+							res=requests.get(**reqparam)
+							# print(globaldirlist)
+							if res.status_code==200 or res.status_code==301:
+									if mypath not in globaldirlist:
+										globaldirlist.append(mypath)
+									else:
+										continue
+
+									if not "Index of" in res.text:
+										print(f"+++++DIRECTORY {reqparam['url']}")
+									else:
+										print(f"+++++OPEN DIRECTORY {reqparam['url']}")
+									for fl in ['index.html','index.php','default.aspx']:
+										try:
+											fl=website+mypath+fl
+											reqparam['url']=fl
+											res=requests.get(**reqparam)
+											if res.status_code==200:
+												code2=res.status_code
+												length2=len(res.text)
+												print(f"Default file {fl} exists (CODE={code2}|LEN={length2})")											
+										except Exception as ex:
+											pass									
+							else:
+								notexistingdirlist.append(mypath)
 
 
-				reqparam['url']=link
-				res=requests.get(**reqparam)
-				code=res.status_code
-				contenttType=res.headers['Content-Type']
-				contenttType=contenttType.split(';')[0]
-				length=len(res.text)
-				mimtype=mimetypes.guess_type(link,strict=True)
+					reqparam['url']=link
+					res=requests.get(**reqparam)
+					code=res.status_code
+					contenttType=res.headers['Content-Type']
+					contenttType=contenttType.split(';')[0]
+					length=len(res.text)
+					mimtype=mimetypes.guess_type(link,strict=True)
 
-				if code==200 and options.extfound:
-					extfound=options.extfound.split(",")
-					for ext in extfound:
-						print(link+ext)
-						try:
-							reqparam['url']=link+ext
-							rs=requests.get(**reqparam)
-							mimtype=mimetypes.guess_type(link+ext,strict=True)
-							if rs.status_code not in nf_codes:
-								if rs.status_code in [403,200,301]:
-									if mimtype[0]==contenttType:
-										print(f"+{link+ext} ((CODE={rs.status_code}|LEN={len(rs.text)}))")#\n{number.value} Links %{precentage}")
+					if code==200 and options.extfound:
+						extfound=options.extfound.split(",")
+						for ext in extfound:
+							print(link+ext)
+							try:
+								reqparam['url']=link+ext
+								rs=requests.get(**reqparam)
+								mimtype=mimetypes.guess_type(link+ext,strict=True)
+								if rs.status_code not in nf_codes:
+									if rs.status_code in [403,200,301]:
+										if mimtype[0]==contenttType:
+											print(f"+{link+ext} ((CODE={rs.status_code}|LEN={len(rs.text)}))")#\n{number.value} Links %{precentage}")
+										else:
+											print(f"-{link+ext} ((CODE={rs.status_code}|LEN={len(rs.text)}))")#\n{number.value} Links %{precentage}")
 									else:
 										print(f"-{link+ext} ((CODE={rs.status_code}|LEN={len(rs.text)}))")#\n{number.value} Links %{precentage}")
-								else:
-									print(f"-{link+ext} ((CODE={rs.status_code}|LEN={len(rs.text)}))")#\n{number.value} Links %{precentage}")
-								if options.output_file:
-									with open(options.output_file,'a',encoding='utf-8') as fl:
-										fl.write(f"+{link+ext} ((CODE={rs.status_code}|LEN={len(rs.text)}))\n")
-						except ConnectionError:
-							pass
+									if options.output_file:
+										with open(options.output_file,'a',encoding='utf-8') as fl:
+											fl.write(f"+{link+ext} ((CODE={rs.status_code}|LEN={len(rs.text)}))\n")
+							except ConnectionError:
+								pass
 
-				if options.NOT_FOUND and code==404:
-					print(linkres)
-					if options.output_file:
-						with open(options.output_file,'a',encoding='utf-8') as fl:
-							fl.writelines(linkres+"\n")					
-				if code not in nf_codes:
-					try:
-						res1=re.search(r'<title>([^>]+)<\/title>',res.text)
-						title=res1[1]
-						if options.notintitle and options.notintitle in title:
-							continue
+					if options.NOT_FOUND and code==404:
+						print(linkres)
+						if options.output_file:
+							with open(options.output_file,'a',encoding='utf-8') as fl:
+								fl.writelines(linkres+"\n")					
+					if code not in nf_codes:
+						try:
+							res1=re.search(r'<title>([^>]+)<\/title>',res.text)
+							title=res1[1]
+							if options.notintitle and options.notintitle in title:
+								continue
 
-						title=re.sub('\s+',' ',title)
-						if res1:
-							if (not options.NOT_FOUND and code!=404) or (options.NOT_FOUND and code==404) :
-								if st_codes:
-									if code in st_codes:
+							title=re.sub('\s+',' ',title)
+							if res1:
+								if (not options.NOT_FOUND and code!=404) or (options.NOT_FOUND and code==404) :
+									if st_codes:
+										if code in st_codes:
+											print(f"{link=} Title:{res1[1]}")
+											if options.output_file:
+												with open(options.output_file,'a',encoding='utf-8') as fl:
+													fl.writelines(f"{link=} Title:{res1[1]}\n")
+									else:
 										print(f"{link=} Title:{res1[1]}")
 										if options.output_file:
 											with open(options.output_file,'a',encoding='utf-8') as fl:
 												fl.writelines(f"{link=} Title:{res1[1]}\n")
+
+
+
+						except TypeError:
+							pass
+					if 200<=code<=301:
+						if contenttType=='text/html' and options.recurs:
+							# Scan dirs should be here
+							listdirs=dirScan(link,reqparam)
+
+							myprint('listdir ',listdirs)
+							for dirr in listdirs:
+								myprint(dirr)
+
+								try:
+									with lock:								
+										if  dirr not in dirlist:
+											myprint(f'newdir detected {dirr}')
+											myprint(dirlist)
+											dirlist.append(dirr)
+											myprint(dirlist)
+										else:
+											listdirs.remove(dirr)
+								except multiprocessing.managers.RemoteError:
+							 		print("RemoteError")
+							with lock:
+								if "/" in dirlist:
+									dirlist.remove('/')
+								dirlist.insert(0,'/')
+							websiteurl=re.sub(r'^(\w{3,5}:\/\/(?:[\w\d\._-]+)+)\/.+',r'\1',link)
+							myprint(f"{websiteurl=}")
+							for dirr in listdirs:
+								if dirr in globaldirlist or dirr in notexistingdirlist:
+									continue
+								url=websiteurl+dirr
+								myprint(f"{url=}")
+								res=requests.get(url,headers=HEADERS)
+								if 200<=res.status_code<400:
+									globaldirlist.append(dirr)
+									print(f'+++++DIRECTORY {url}')
+									if "Index of" in res.text:
+										print(f"{url} is opendirectory")
+									for fl in ['index.html','index.php','default.aspx']:
+										try:
+											fl=url+fl
+											reqparam['url']=fl
+											res=requests.get(**reqparam)
+											if res.status_code==200:
+												code2=res.status_code
+												length2=len(res.text)
+												print(f"Default file {fl} exists (CODE2={code2}|LEN2={length2})")											
+										except ConnectionError:
+											pass
 								else:
-									print(f"{link=} Title:{res1[1]}")
+									if dirr in dirlist:
+										myprint(f"remove {dirr} {res.status_code}")
+										dirlist.remove(dirr)
+
+
+								# print(dirlist)
+
+						if mimtype[0]==contenttType or re.search(r"\/\.\w+$",link) and 200<=code<400:
+							linkres=f"+{link} (CODE={code}|LEN={length})"#\n {number.value} %{precentage}"
+						else:
+							linkres=f"-{link} (CODE={code}|LEN={length}|Type={contenttType}) {mimtype}"
+					else:
+						linkres=f"-{link} (CODE={code}|LEN={length})"
+					if options.location:
+					 	headers=res.headers
+					 	try:
+					 		linkres+=f"Location {headers['Location']}"
+					 	except:
+					 		pass
+
+					if nf_codes:
+						if code not in nf_codes and length>0:
+							if st_codes:
+								if code in st_codes:
+									print(linkres)
 									if options.output_file:
 										with open(options.output_file,'a',encoding='utf-8') as fl:
-											fl.writelines(f"{link=} Title:{res1[1]}\n")
-
-
-
-					except TypeError:
-						pass
-				if 200<=code<=301:
-					if contenttType=='text/html' and options.recurs:
-						# Scan dirs should be here
-						listdirs=dirScan(link,reqparam)
-
-						myprint('listdir ',listdirs)
-						for dirr in listdirs:
-							myprint(dirr)
-
-							try:
-								with lock:								
-									if  dirr not in dirlist:
-										myprint(f'newdir detected {dirr}')
-										myprint(dirlist)
-										dirlist.append(dirr)
-										myprint(dirlist)
-									else:
-										listdirs.remove(dirr)
-							except multiprocessing.managers.RemoteError:
-						 		print("RemoteError")
-						with lock:
-							if "/" in dirlist:
-								dirlist.remove('/')
-							dirlist.insert(0,'/')
-						websiteurl=re.sub(r'^(\w{3,5}:\/\/(?:[\w\d\._-]+)+)\/.+',r'\1',link)
-						myprint(f"{websiteurl=}")
-						for dirr in listdirs:
-							if dirr in globaldirlist or dirr in notexistingdirlist:
-								continue
-							url=websiteurl+dirr
-							myprint(f"{url=}")
-							res=requests.get(url,headers=HEADERS)
-							if 200<=res.status_code<400:
-								globaldirlist.append(dirr)
-								print(f'+++++DIRECTORY {url}')
-								if "Index of" in res.text:
-									print(f"{url} is opendirectory")
-								for fl in ['index.html','index.php','default.aspx']:
-									try:
-										fl=url+fl
-										reqparam['url']=fl
-										res=requests.get(**reqparam)
-										if res.status_code==200:
-											code2=res.status_code
-											length2=len(res.text)
-											print(f"Default file {fl} exists (CODE2={code2}|LEN2={length2})")											
-									except ConnectionError:
-										pass
+											fl.writelines(linkres+"\n")							
 							else:
-								if dirr in dirlist:
-									myprint(f"remove {dirr} {res.status_code}")
-									dirlist.remove(dirr)
-
-
-							# print(dirlist)
-
-					if mimtype[0]==contenttType or re.search(r"\/\.\w+$",link) and 200<=code<400:
-						linkres=f"+{link} (CODE={code}|LEN={length})"#\n {number.value} %{precentage}"
+								print(linkres)
+								if options.output_file:
+									with open(options.output_file,'a',encoding='utf-8') as fl:
+										fl.writelines(linkres+"\n")
 					else:
-						linkres=f"-{link} (CODE={code}|LEN={length}|Type={contenttType}) {mimtype}"
-				else:
-					linkres=f"-{link} (CODE={code}|LEN={length})"
-				if options.location:
-				 	headers=res.headers
-				 	try:
-				 		linkres+=f"Location {headers['Location']}"
-				 	except:
-				 		pass
-
-				if nf_codes:
-					if code not in nf_codes and length>0:
-						if st_codes:
-							if code in st_codes:
+						if code!=404 and length>0:
+							if st_codes:
+								if code in st_codes:
+									print(linkres)
+									if options.output_file:
+										with open(options.output_file,'a',encoding='utf-8') as fl:
+											fl.writelines(linkres+"\n")								
+							else:
 								print(linkres)
 								if options.output_file:
 									with open(options.output_file,'a',encoding='utf-8') as fl:
-										fl.writelines(linkres+"\n")							
-						else:
-							print(linkres)
-							if options.output_file:
-								with open(options.output_file,'a',encoding='utf-8') as fl:
-									fl.writelines(linkres+"\n")
-				else:
-					if code!=404 and length>0:
-						if st_codes:
-							if code in st_codes:
-								print(linkres)
-								if options.output_file:
-									with open(options.output_file,'a',encoding='utf-8') as fl:
-										fl.writelines(linkres+"\n")								
-						else:
-							print(linkres)
-							if options.output_file:
-								with open(options.output_file,'a',encoding='utf-8') as fl:
-									fl.writelines(linkres+"\n")					
+										fl.writelines(linkres+"\n")					
 
 
 			except ConnectionError:
+				if link in superlist:
+					superlist.remove(link)
 				if options.NOT_FOUND_PAGES:
 					print(f"NOT_FOUND_PAGE: {link}")
 				myprint("[-]Connection problems")
@@ -411,7 +430,9 @@ def superProc(options,queue,number,totalNumber,dirlist,globaldirlist,notexisting
 				print("BrokenPipeError")
 				return
 			except:
-				pass
+				if link in superlist:
+					superlist.remove(link)				
+				
 			finally:
 				precentage=0
 				try:
@@ -530,6 +551,7 @@ def main(dirCounter):
 	number=manager.Value('i',0)	
 	dirlist=manager.list()
 	globaldirlist=manager.list()
+	superlist=manager.list()
 	notexistingdirlist=manager.list()
 	totalnumber=manager.Value('i',0)	
 	lock=manager.Lock()
@@ -547,7 +569,7 @@ def main(dirCounter):
 	dt=datetime.now()
 	print(dt.strftime('START_TIME: %a %b %d %H:%M:%S %Y'))
 	for num in range(0,PROC_NUM):
-		prc=Process(target=superProc,args=(options,queue,number,totalnumber,dirlist,globaldirlist,notexistingdirlist,lock,))
+		prc=Process(target=superProc,args=(options,queue,number,totalnumber,dirlist,globaldirlist,notexistingdirlist,superlist,lock,))
 		prc.start()
 		procs.append(prc)	
 	if not options.http_length:
@@ -567,18 +589,8 @@ def main(dirCounter):
 
 	print(f"WORDLIST_FILES: {dictionaryList} ")
 
-	wordcounter=0
-	for dictpath in dictionaryList:
-		if dictpath.startswith('http://') or dictpath.startswith('https://'):
-			path=urlparse(dictpath).path
-			path=os.path.basename(path)
-			if path!='' or path!='/':
-				downloadFile(dictpath,path)
-				dictpath=path
+	wordcounter,word_list=gen_words(dictionaryList)
 
-		if os.path.exists(dictpath):
-			wordcounter+=count_lines(dictpath,50_000)
-	word_list=word_generator(dictionaryList)
 	myprint('stucked here')
 	#wordProduct=(word_generator(dictionaryList) for _ in range(0,3))#iter(product(word_generator(dictionaryList),repeat=2))
 
@@ -610,7 +622,7 @@ def main(dirCounter):
 			if "/" in dirlist:
 				dirlist.remove('/')
 			dirlist.insert(0,'/')
-			myprint("dirlist ",dirlist)
+			print("dirlist ",dirlist)
 		# with lock:
 			for dirr in dirlist:
 				if dirr in globaldirlist or dirr in notexistingdirlist:
@@ -663,7 +675,9 @@ def main(dirCounter):
 						for ext in extvars:
 							myput(queue,options,url+ext)
 					else:
-						myput(queue,options,url)					
+						myput(queue,options,url)	
+				else:
+					wordcounter,word_list=gen_words(dictionaryList)			
 				dirCounter.value+=1
 			for _ in range(PROC_NUM):
 				queue.put('TERMINATE')
