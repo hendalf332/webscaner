@@ -177,6 +177,21 @@ def replacedolar(dictlist,queue,url,extvars=[]):
 		        queue.put(newurl)
 		    return newurl
 
+def gen_words(dictionaryList):
+	wordcounter=0
+	for dictpath in dictionaryList:
+		if dictpath.startswith('http://') or dictpath.startswith('https://'):
+			path=urlparse(dictpath).path
+			path=os.path.basename(path)
+			if path!='' or path!='/':
+				downloadFile(dictpath,path)
+				dictpath=path
+
+		if os.path.exists(dictpath):
+			wordcounter+=count_lines(dictpath,50_000)
+		myprint(f"{dictpath} {wordcounter}")
+	word_list=word_generator(dictionaryList)
+	return wordcounter,word_list
 
 def superProc(options,queue,number,totalNumber,dirlist,lock):
 	HEADERS= {'User-Agent':'Mozilla/5.0 (X11; U; Linux i686) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/73.0.3683.140 Safari/537.36'}
@@ -228,8 +243,6 @@ def superProc(options,queue,number,totalNumber,dirlist,lock):
 				print('superproc TERMINATED')
 				return
 			try:
-				# if totalNumber.value>0:
-				# 	precentage=number.value/(totalNumber.value/100)
 				if options.delay:
 					time.sleep(int(options.delay)/1000)
 				reqparam['url']=link
@@ -368,10 +381,11 @@ def superProc(options,queue,number,totalNumber,dirlist,lock):
 				myprint("[-]Connection problems")
 			finally:
 				precentage=1
-				# if totalNumber.value>0:
-				# 	precentage=number.value/(totalNumber.value/100)
-				# print(f"\rPROGRESS: {number.value} of {totalNumber.value if totalNumber.value!=0 else 'Unknown'} %{precentage:00.2f}",end='\r')
-				# y.value+=1
+				if totalNumber.value>0:
+					precentage=number.value/(totalNumber.value/100)
+				print(f"\rPROGRESS: {number.value} of {totalNumber.value if totalNumber.value!=0 else 'Unknown'} %{precentage:00.2f}",end='\r')
+				number.value+=1
+				# print(f"\nPROGRESS: {number.value}")
 
 def caluclate_order(mystr):
 	idxres={}
@@ -555,14 +569,14 @@ def main(dirCounter):
 	word_dictionary=None
 	PROC_NUM=5
 	numbcomb=1 #number of possible urls 
-	wordCounter=0
+	wordcounter=None
 	wordProduct=None
 	options=get_arguments()
 	extvars=list()
 	manager=Manager()
 	number=manager.Value('i',0)	
 	dirlist=manager.list()
-	totalnumber=manager.Value('i',0)	
+	totalnumber=manager.Value('i',1)	
 	lock=manager.Lock()
 	if options.extvar:
 		extvars=options.extvar.split(',')
@@ -588,20 +602,10 @@ def main(dirCounter):
 		dictionaryList=options.dictionary.split(',')
 		print(f"WORDLIST_FILES: {dictionaryList} ")
 
-		wordcounter=0
-		for dictpath in dictionaryList:
-			if dictpath.startswith('http://') or dictpath.startswith('https://'):
-				path=urlparse(dictpath).path
-				path=os.path.basename(path)
-				if path!='' or path!='/':
-					downloadFile(dictpath,path)
-					dictpath=path
-
-			if os.path.exists(dictpath):
-				wordcounter+=count_lines(dictpath,50_000)
-		word_list=word_generator(dictionaryList)
-		totalnumber.value=wordcounter*(len(extvars)+1)
-
+		wordcounter,word_list=gen_words(dictionaryList)
+		if options.scan_dirs:
+			totalnumber.value=wordcounter*(len(extvars)+1)
+			print(f"{totalnumber.value}")
 		dolarCounter=Counter(http_template)
 		dolarCounter=dolarCounter['$']
 		myprint(dolarCounter)
@@ -656,7 +660,7 @@ def main(dirCounter):
 					dirlist.remove(dirr)
 		# with lock:
 			print(dirlist)
-
+			myprint('yes2')
 		if options.recurs:
 			print("recurs")
 			# with lock:
@@ -681,7 +685,9 @@ def main(dirCounter):
 						for ext in extvars:
 							queue.put(url+ext)
 					else:
-						queue.put(url)					
+						queue.put(url)	
+				else:
+					wordcounter,word_list=gen_words(dictionaryList)				
 				dirCounter.value+=1
 			for _ in range(PROC_NUM):
 				queue.put('TERMINATE')
@@ -691,7 +697,7 @@ def main(dirCounter):
 			print(dt.strftime('END_TIME: %a %b %d %H:%M:%S %Y'))			
 			return
 
-		for words in wordProduct:
+		for words in word_list:
 			# print(dirlist)
 			if len(dirlist)==0:
 				dirIndex=0
@@ -703,7 +709,7 @@ def main(dirCounter):
 				if prevdir!=curidx:
 					print(f"[!]Scan directory {curidx}")
 					prevdir=curidx
-			url=websiteurl+dirlist[dirIndex]+words[0]
+			url=websiteurl+dirlist[dirIndex]+words
 			# print(url)
 			if extvars:
 				queue.put(url)
@@ -720,6 +726,7 @@ def main(dirCounter):
 		print(dt.strftime('END_TIME: %a %b %d %H:%M:%S %Y'))			
 		# input()
 		return
+	myprint('yes1')
 	order=caluclate_order(http_template)
 				
 	myprint(order)
@@ -757,7 +764,7 @@ def main(dirCounter):
 				http_template_list.append([new_template,order])					
 		
 	myprint(http_template_list)
-	# myinput()
+	myprint('yes')
 	for idx,(http_template,order) in enumerate(http_template_list):
 		wildcharlist=[]
 		if len(order)==0:
@@ -823,18 +830,23 @@ def main(dirCounter):
 					newmask=http_template.replace('*','?'*i)
 					cntr=Counter(newmask)
 					masks_list.append((newmask,cntr['?']))
+		print(http_template)
+		totnmbr=pow(len(chrStr),Counter(http_template)['?'])
 		if len(masks_list)==0:
 			masks_list.append((http_template,Counter(http_template)['?']))
 		for wldchr,chrlst in wildcharlist:
 			supercharlist.append(chrlst)
+			myprint(len(chrlst))
+			myprint(chrlst)
 			totnmbr*=len(chrlst)
+			myprint(totnmbr)
 
-		totalnumber.value*=totnmbr
+		if wordcounter and wordcounter>0:
+			totnmbr*=pow(wordcounter,Counter(http_template)['$'])
+			myprint(f"pow({wordcounter},{Counter(http_template)['$']})")
+		totalnumber.value+=totnmbr
 		myprint(f"{totalnumber.value=}")
-		print(f"{masks_list[-1][-1]}*{len(chrStr)}")		
-		if masks_list[-1][-1]>0:
-			totalnumber.value*=masks_list[-1][-1]*len(chrStr)
-		myprint(f"{totalnumber.value=} 2")
+		myprint(f"{masks_list[-1][-1]}*{len(chrStr)}")		
 
 		for mask,length in masks_list:
 			all_combinations=product(chrStr,repeat=length)
@@ -918,5 +930,4 @@ if __name__ == '__main__':
 		elif ans=='n':
 			dirCounter.value+=1
 			print(f"[!] Go to next directory")
-
 
