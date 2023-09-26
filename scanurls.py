@@ -17,6 +17,7 @@ import re
 from collections import Counter
 import sys
 import glob
+from urllib.parse import urlparse
 DEBUGFLAG=False
 HELP_MSG=f"""
 USAGE python {sys.argv[0]} -t <URLTEMPLATE> -l <MAXIMUMLENGTHOFURL> -d <PATH_OR_LINK_TO_DICTIONARY>
@@ -557,6 +558,11 @@ async def fetch_url(session,url,dirlist,queue):
 				dirr+='/'
 			dirlist.remove(dirr)
 	except:
+		dirr=urlparse(url).path	
+		if not dirr.endswith('/'):
+			dirr+='/'
+		if dirr in dirlist:
+			dirlist.remove(dirr)		
 		return "bad"
 	return response
 
