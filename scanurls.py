@@ -205,6 +205,7 @@ def superProc(options,queue,number,totalNumber,dirlist,superlist,lock):
 	user=password=None
 	myprint("superproc started")
 	nf_codes=[]
+	title=None
 	mimetypes.add_type('text/html','.php',strict=True)
 	mimetypes.add_type('text/html','.aspx',strict=True)
 	mimetypes.add_type('text/plain','.ini',strict=True)
@@ -292,54 +293,54 @@ def superProc(options,queue,number,totalNumber,dirlist,superlist,lock):
 								fl.writelines(linkres+"\n")					
 					if code not in nf_codes:
 						try:
-							res1=re.search(r'<title>([^>]+)<\/title>',res.text)
-							title=res1[1]
-							if options.notintitle and options.notintitle in title:
-								continue
+							if contenttType=='text/html':
+								res1=re.search(r'<title>([^>]+)<\/title>',res.text)
+								title=res1[1]
+								if options.notintitle and options.notintitle in title:
+									continue
 
-							title=re.sub('\s+',' ',title)
-							if res1:
-								print(f"{link=} Title:{res1[1]}")
+								title=re.sub('\s+',' ',title)
+								if res1:
+									print(f"{link=} Title:{res1[1]}")
 
 
 						except TypeError:
-							pass
+							title="N/F"
 					if 200<=code<=301:
+						if mimtype[0]==contenttType or re.search(r"\/\.\w+$",link) or re.search(r'^(\w{3,5}:\/\/(?:[\w\d\._-]+)+)$',link):
+							linkres=f"+{link} (CODE={code}|LEN={length}) {title=}\n"# {number.value} %{precentage}"
+						else:
+							linkres=f"-{link} (CODE={code}|LEN={length}|Type={contenttType}) {mimtype}"#\n{number.value} Links %{precentage}"
 						if contenttType=='text/html' and options.recurs:
 						
 							listdirs=dirScan(link,reqparam)
 							myprint('listdir ',listdirs)
-							for dirr in listdirs:
-								myprint(dirr)
-
-								try:
-									with lock:								
-										if  dirr not in dirlist:
-											myprint(f'newdir detected {dirr}')
-											myprint(dirlist)
-											dirlist.append(dirr)
-											myprint(dirlist)
-										else:
-											listdirs.remove(dirr)
-								except multiprocessing.managers.RemoteError:
-							 		print("RemoteError")
-							with lock:
-								if "/" in dirlist:
-									dirlist.remove('/')
-								dirlist.insert(0,'/')
 							websiteurl=re.sub(r'^(\w{3,5}:\/\/(?:[\w\d\._-]+)+)\/.+',r'\1',link)
 							myprint(f"{websiteurl=}")
-							urls=[websiteurl+dirr for dirr in listdirs if not dirr in dirlist]
-							loop = asyncio.get_event_loop()
-							responses = loop.run_until_complete(fetch_all_urls(urls,dirlist,queue))
+							if len(listdirs)>0:
+								urls=[websiteurl+dirr for dirr in listdirs if not dirr in dirlist]
+								loop = asyncio.get_event_loop()
+								responses = loop.run_until_complete(fetch_all_urls(urls,dirlist,queue))
+								for dirr in listdirs:
+									try:
+										with lock:								
+											if  dirr not in dirlist:
+												myprint(f'newdir detected {dirr}')
+												myprint(dirlist)
+												dirlist.append(dirr)
+												myprint(dirlist)
+											else:
+												listdirs.remove(dirr)
+									except multiprocessing.managers.RemoteError:
+								 		print("RemoteError")
+								with lock:
+									if "/" in dirlist:
+										dirlist.remove('/')
+									dirlist.insert(0,'/')
 
 
-						if mimtype[0]==contenttType or re.search(r"\/\.\w+$",link) or re.search(r'^(\w{3,5}:\/\/(?:[\w\d\._-]+)+)$',link):
-							linkres=f"+{link} (CODE={code}|LEN={length})\n"# {number.value} %{precentage}"
-						else:
-							linkres=f"-{link} (CODE={code}|LEN={length}|Type={contenttType}) {mimtype}"#\n{number.value} Links %{precentage}"
 					else:
-						linkres=f"-{link} (CODE={code}|LEN={length})"#\n{number.value} Links %{precentage}"
+						linkres=f"-{link} (CODE={code}|LEN={length}) {title=}"#\n{number.value} Links %{precentage}"
 					if options.location:
 					 	headers=res.headers
 					 	try:
@@ -432,12 +433,12 @@ def reformat_httptemplate(http_template):
 	global template_list
 	wildcharlist=[]
 	strt,end=[],[]
-	res=re.search(r'(\(\?(?:[^()]+,)+[^()]+\))',http_template,flags=re.I|re.M)
+	res=re.search(r'(\(\?(?:[^()]+;)+[^()]+\))',http_template,flags=re.I|re.M)
 	if res:
-		items=res[1][2:-1].split(',')
+		items=res[1][2:-1].split(';')
 		for item in items:
 			myprint(item)
-			new_template=re.sub(r'(\(\?(?:[^()]+,)+[^()]+\))',item,http_template,1)
+			new_template=re.sub(r'(\(\?(?:[^()]+;)+[^()]+\))',item,http_template,1)
 			myprint(new_template)
 			http_template_list.append([new_template,caluclate_order(new_template)])
 			http_template_list= reformat_httptemplate(new_template)			
@@ -545,6 +546,10 @@ def scanDirs(websiteurl,HEADERS):
 async def fetch_url(session,url,dirlist,queue):
 	try:
 		response=await session.get(url)
+		dirr=urlparse(url).path
+		if not dirr.endswith('/'):
+			dirr+='/'
+
 		if 200<=response.status<400:
 			print(f'+++++DIRECTORY {url}')
 			if "Index of" in await response.text():
@@ -557,7 +562,9 @@ async def fetch_url(session,url,dirlist,queue):
 			if not dirr.endswith('/'):
 				dirr+='/'
 			dirlist.remove(dirr)
-	except:
+	except (aiohttp.ClientResponseError,aiohttp.ClientTimeout) as ex:
+		print(f"An exception occurred: {type(ex).__name__}: {str(ex)}")
+
 		dirr=urlparse(url).path	
 		if not dirr.endswith('/'):
 			dirr+='/'
@@ -667,9 +674,16 @@ def main(dirCounter):
 		if options.recurs:
 			print("recurs")
 		
-		
-			totalnumber.value*=len(dirlist)
+			if len(dirlist)>0:
+				totalnumber.value*=len(dirlist)
+			else:
+				dirlist.append("/")
+
+			myprint(f"{totalnumber.value=}")
+			myprint(f"{dirCounter.value=}")
+			myprint(f"{len(dirlist)}")
 			while dirCounter.value!=len(dirlist):
+				myprint("recurs")
 				for words in word_list:
 					if len(dirlist)==0:
 						dirIndex=0
@@ -924,11 +938,18 @@ if __name__ == '__main__':
 			for prc in chldlist:
 				prc.resume()			
 		elif ans=='q':
-			print('[!]Terminated processes')
-			chldlist=p.children(recursive=True)
-			for prc in chldlist:
-				prc.kill()	
-			sys.exit(0)		
+			print("Exit program (y/n)?")
+			ch=readchar.readchar()
+			try:
+				ans=str(ch,encoding='UTF-8').lower()
+			except:
+				ans=ch.lower()
+			if ans=='y':			
+				print('[!]Terminate processes')
+				chldlist=p.children(recursive=True)
+				for prc in chldlist:
+					prc.kill()	
+				sys.exit(0)		
 		elif ans=='n':
 			dirCounter.value+=1
 			print(f"[!] Go to next directory")
